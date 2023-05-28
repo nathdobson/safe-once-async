@@ -2,10 +2,10 @@ use std::future::Future;
 use std::intrinsics::unreachable;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{Acquire, Release};
+use std::sync::{PoisonError, TryLockError};
 use parking_lot::lock_api::GuardSend;
-use tokio::sync::{AcquireError, Semaphore, SemaphorePermit, TryAcquireError};
-use crate::raw::AsyncRawOnce;
-use crate::{LockError, PoisonError, RawOnce, RawOnceState};
+use tokio::sync::{Semaphore, TryAcquireError};
+use crate::raw::{AsyncRawOnce, RawOnceState};
 
 const STATE_UNINIT: usize = 0;
 const STATE_INIT: usize = 1;
@@ -18,13 +18,13 @@ pub struct AsyncRawOnceLock {
 
 impl AsyncRawOnceLock {}
 
-unsafe impl RawOnce for AsyncRawOnceLock {
+unsafe impl AsyncRawOnce for AsyncRawOnceLock {
     type GuardMarker = GuardSend;
     const UNINIT: Self = AsyncRawOnceLock { state: AtomicUsize::new(STATE_UNINIT), semaphore: Semaphore::const_new(1) };
     const INIT: Self = AsyncRawOnceLock { state: AtomicUsize::new(STATE_INIT), semaphore: Semaphore::const_new(1) };
     const POISON: Self = AsyncRawOnceLock { state: AtomicUsize::new(STATE_POISON), semaphore: Semaphore::const_new(1) };
 
-    fn try_lock_checked(&self) -> Result<Option<RawOnceState>, PoisonError> {
+    fn try_lock_checked(&self) -> Result<Option<RawOnceState>, PoisonError<()>> {
         match self.try_get_checked()? {
             RawOnceState::Occupied => { return Ok(Some(RawOnceState::Occupied)); }
             _ => {}
@@ -49,11 +49,11 @@ unsafe impl RawOnce for AsyncRawOnceLock {
         }
     }
 
-    fn try_get_checked(&self) -> Result<RawOnceState, PoisonError> {
+    fn try_get_checked(&self) -> Result<RawOnceState, PoisonError<()>> {
         match self.state.load(Acquire) {
             STATE_UNINIT => Ok(RawOnceState::Vacant),
             STATE_INIT => Ok(RawOnceState::Occupied),
-            STATE_POISON => Err(PoisonError),
+            STATE_POISON => Err(PoisonError::new(())),
             _ => unreachable!()
         }
     }
@@ -71,10 +71,8 @@ unsafe impl RawOnce for AsyncRawOnceLock {
         self.state.store(STATE_INIT, Release);
         self.semaphore.close();
     }
-}
 
-unsafe impl AsyncRawOnce for AsyncRawOnceLock {
-    type LockChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, LockError>>;
+    type LockChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
     fn lock_checked<'a>(&'a self) -> Self::LockChecked<'a> {
         async move {
             match self.try_get_checked()? {
@@ -97,8 +95,7 @@ unsafe impl AsyncRawOnce for AsyncRawOnceLock {
         }
     }
 
-    type GetChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, LockError>>;
-
+    type GetChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
     fn get_checked<'a>(&'a self) -> Self::GetChecked<'a> {
         async move {
             match self.try_get_checked()? {
@@ -118,3 +115,7 @@ unsafe impl AsyncRawOnce for AsyncRawOnceLock {
         }
     }
 }
+
+unsafe impl Send for AsyncRawOnceLock {}
+
+unsafe impl Sync for AsyncRawOnceLock {}

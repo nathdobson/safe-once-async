@@ -1,34 +1,47 @@
-use std::cell::Cell;
-use std::future::Future;
+use std::cell::{Cell, UnsafeCell};
+use std::default::default;
+use std::future::{Future, poll_fn};
+use std::mem::MaybeUninit;
+use std::pin::Pin;
+use std::thread::panicking;
+use futures::future::BoxFuture;
+use futures::FutureExt;
+use tokio::task::JoinHandle;
+use crate::async_fused::{AsyncFused, AsyncFusedEntry, AsyncFusedGuard};
 use crate::const_box::{ConstBox, ConstBoxFuture};
-use crate::once::Once;
-use crate::raw::AsyncRawOnce;
-use crate::RawOnce;
+use crate::detached::{detached, detached_lazy, DetachedLazy};
+// use crate::pure_future::PureFuture;
+// use crate::async_once::{AsyncOnce, AsyncOnceEntry};
+use crate::raw::{AsyncRawOnce, RawOnceState};
+// use crate::spawned_future::SpawnedFuture;
+use crate::thunk::{OptionThunk, Thunk};
 
-pub struct AsyncLazy<R: RawOnce, T, F> {
-    once: Once<R, T>,
-    init: Cell<Option<F>>,
+pub struct AsyncLazy<R: AsyncRawOnce, T> {
+    fused: AsyncFused<R, Thunk<T, BoxFuture<'static, T>>>,
 }
 
-impl<R: RawOnce, T, F: Future<Output=T>> AsyncLazy<R, T, F> {
-    pub const fn new(init: F) -> Self {
-        AsyncLazy { once: Once::new(), init: Cell::new(Some(init)) }
+impl<R: AsyncRawOnce, T: 'static + Send> AsyncLazy<R, T> {
+    pub fn new<Fu>(fu: Fu) -> Self where Fu: 'static + Send + Future<Output=T> {
+        AsyncLazy {
+            fused: AsyncFused::new(Thunk::new(async move {
+                detached(fu).await
+            }.boxed()))
+        }
     }
-    pub async fn get(&self) -> &T where R: AsyncRawOnce {
-        self.once.get_or_init_async(async move {
-            self.init.take().unwrap().await
-        }).await
+
+    pub async fn get(&self) -> &T {
+        match self.fused.lock().await {
+            AsyncFusedEntry::Write(mut guard) => {
+                guard.get_or_init().await;
+                guard.init().get().unwrap()
+            }
+            AsyncFusedEntry::Read(x) => x.get().unwrap()
+        }
     }
 }
 
-impl<R: RawOnce, T> AsyncLazy<R, T, ConstBoxFuture<T>> {
-    pub const fn new_static<F: Future<Output=T> + Send + 'static>(x: F) -> Self {
-        let x: ConstBoxFuture<T> = ConstBox::pin(x);
-        Self::new(x)
+impl<R: AsyncRawOnce, T> From<T> for AsyncLazy<R, T> {
+    fn from(value: T) -> Self {
+        AsyncLazy { fused: AsyncFused::inited(Thunk::new_value(value)) }
     }
 }
-
-unsafe impl<R: RawOnce, T, F> Send for AsyncLazy<R, T, F> where R: Send, F: Send, T: Send {}
-
-unsafe impl<R: RawOnce, T, F> Sync for AsyncLazy<R, T, F> where Once<R, T>: Sync {}
-

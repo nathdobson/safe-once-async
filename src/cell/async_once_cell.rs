@@ -1,11 +1,11 @@
 use std::cell::{Cell, RefCell};
 use std::future::Future;
 use std::ptr::null_mut;
+use std::sync::{PoisonError, TryLockError};
 use std::task::Waker;
 use parking_lot::lock_api::GuardNoSend;
-use crate::{LockError, PoisonError, RawOnce, RawOnceState};
 
-use crate::raw::AsyncRawOnce;
+use crate::raw::{AsyncRawOnce, RawOnceState};
 
 #[derive(Copy, Clone, Debug)]
 enum State {
@@ -32,7 +32,7 @@ struct Inner {
 #[derive(Debug)]
 pub struct AsyncRawOnceCell(RefCell<Inner>);
 
-unsafe impl RawOnce for AsyncRawOnceCell {
+unsafe impl AsyncRawOnce for AsyncRawOnceCell {
     type GuardMarker = GuardNoSend;
     const UNINIT: Self = AsyncRawOnceCell(RefCell::new(Inner {
         state: State::Uninit,
@@ -50,7 +50,7 @@ unsafe impl RawOnce for AsyncRawOnceCell {
         getters: null_mut(),
     }));
 
-    fn try_lock_checked(&self) -> Result<Option<RawOnceState>, PoisonError> {
+    fn try_lock_checked(&self) -> Result<Option<RawOnceState>, PoisonError<()>> {
         todo!()
         // match self.0.get() {
         //     State::Uninit => {
@@ -66,7 +66,7 @@ unsafe impl RawOnce for AsyncRawOnceCell {
         // }
     }
 
-    fn try_get_checked(&self) -> Result<RawOnceState, PoisonError> {
+    fn try_get_checked(&self) -> Result<RawOnceState, PoisonError<()>> {
         todo!()
         // match self.0.get() {
         //     State::Uninit => Ok(RawOnceState::Vacant),
@@ -97,10 +97,7 @@ unsafe impl RawOnce for AsyncRawOnceCell {
         // }
         todo!()
     }
-}
-
-unsafe impl AsyncRawOnce for AsyncRawOnceCell {
-    type LockChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, LockError>>;
+    type LockChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
 
     fn lock_checked<'a>(&'a self) -> Self::LockChecked<'a> {
         async move {
@@ -108,7 +105,7 @@ unsafe impl AsyncRawOnce for AsyncRawOnceCell {
         }
     }
 
-    type GetChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, LockError>>;
+    type GetChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
 
     fn get_checked<'a>(&'a self) -> Self::GetChecked<'a> {
         async move {
