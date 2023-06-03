@@ -16,6 +16,7 @@
 #![feature(coerce_unsized)]
 #![feature(const_pin)]
 #![feature(const_ptr_is_null)]
+#![feature(exclusive_wrapper)]
 
 
 pub mod raw;
@@ -43,7 +44,7 @@ mod const_box;
 mod thunk;
 pub mod async_fused;
 pub mod detached;
-mod mut_cell;
+// mod mut_cell;
 pub mod async_static;
 
 struct Droppy {}

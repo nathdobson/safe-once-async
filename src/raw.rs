@@ -4,20 +4,20 @@ use std::sync::TryLockError;
 
 pub enum RawOnceState { Occupied, Vacant }
 
-pub unsafe trait AsyncRawOnce: 'static {
+pub unsafe trait AsyncRawFused: 'static {
     type GuardMarker;
-    const UNINIT: Self;
-    const INIT: Self;
+    const UNLOCKED: Self;
+    const READ: Self;
     const POISON: Self;
-    fn try_lock_checked(&self) -> Result<Option<RawOnceState>, PoisonError<()>>;
-    fn try_get_checked(&self) -> Result<RawOnceState, PoisonError<()>>;
-    unsafe fn unlock_nopoison(&self);
+    fn try_write_checked(&self) -> Result<Option<RawOnceState>, PoisonError<()>>;
+    fn try_read_checked(&self) -> Result<RawOnceState, PoisonError<()>>;
+    unsafe fn unlock(&self);
     unsafe fn unlock_poison(&self);
-    unsafe fn unlock_init(&self);
+    unsafe fn unlock_fuse(&self);
 
     type LockChecked<'a>: 'a + Send+Future<Output=Result<RawOnceState, TryLockError<() > > > where Self: 'a;
-    fn lock_checked<'a>(&'a self) -> Self::LockChecked<'a>;
+    fn write_checked<'a>(&'a self) -> Self::LockChecked<'a>;
 
     type GetChecked<'a>: 'a + Send+Future<Output=Result<RawOnceState, TryLockError<() > > > where Self: 'a;
-    fn get_checked<'a>(&'a self) -> Self::GetChecked<'a>;
+    fn read_checked<'a>(&'a self) -> Self::GetChecked<'a>;
 }

@@ -5,7 +5,7 @@ use std::sync::{PoisonError, TryLockError};
 use std::task::Waker;
 use parking_lot::lock_api::GuardNoSend;
 
-use crate::raw::{AsyncRawOnce, RawOnceState};
+use crate::raw::{AsyncRawFused, RawOnceState};
 
 #[derive(Copy, Clone, Debug)]
 enum State {
@@ -30,27 +30,27 @@ struct Inner {
 }
 
 #[derive(Debug)]
-pub struct AsyncRawOnceCell(RefCell<Inner>);
+pub struct AsyncRawFusedCell(RefCell<Inner>);
 
-unsafe impl AsyncRawOnce for AsyncRawOnceCell {
+unsafe impl AsyncRawFused for AsyncRawFusedCell {
     type GuardMarker = GuardNoSend;
-    const UNINIT: Self = AsyncRawOnceCell(RefCell::new(Inner {
+    const UNLOCKED: Self = AsyncRawFusedCell(RefCell::new(Inner {
         state: State::Uninit,
         lockers: null_mut(),
         getters: null_mut(),
     }));
-    const INIT: Self = AsyncRawOnceCell(RefCell::new(Inner {
+    const READ: Self = AsyncRawFusedCell(RefCell::new(Inner {
         state: State::Initialized,
         lockers: null_mut(),
         getters: null_mut(),
     }));
-    const POISON: Self = AsyncRawOnceCell(RefCell::new(Inner {
+    const POISON: Self = AsyncRawFusedCell(RefCell::new(Inner {
         state: State::Poison,
         lockers: null_mut(),
         getters: null_mut(),
     }));
 
-    fn try_lock_checked(&self) -> Result<Option<RawOnceState>, PoisonError<()>> {
+    fn try_write_checked(&self) -> Result<Option<RawOnceState>, PoisonError<()>> {
         todo!()
         // match self.0.get() {
         //     State::Uninit => {
@@ -66,7 +66,7 @@ unsafe impl AsyncRawOnce for AsyncRawOnceCell {
         // }
     }
 
-    fn try_get_checked(&self) -> Result<RawOnceState, PoisonError<()>> {
+    fn try_read_checked(&self) -> Result<RawOnceState, PoisonError<()>> {
         todo!()
         // match self.0.get() {
         //     State::Uninit => Ok(RawOnceState::Vacant),
@@ -75,14 +75,14 @@ unsafe impl AsyncRawOnce for AsyncRawOnceCell {
         //     State::Poison => Err(PoisonError),
         // }
     }
-    unsafe fn unlock_nopoison(&self) {
+    unsafe fn unlock(&self) {
         todo!()
         // match self.0.get() {
         //     State::Initializing => self.0.set(State::Uninit),
         //     _ => panic!("Not already initializing"),
         // }
     }
-    unsafe fn unlock_init(&self) {
+    unsafe fn unlock_fuse(&self) {
         todo!()
         // match self.0.get() {
         //     State::Initializing => self.0.set(State::Initialized),
@@ -99,7 +99,7 @@ unsafe impl AsyncRawOnce for AsyncRawOnceCell {
     }
     type LockChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
 
-    fn lock_checked<'a>(&'a self) -> Self::LockChecked<'a> {
+    fn write_checked<'a>(&'a self) -> Self::LockChecked<'a> {
         async move {
             todo!()
         }
@@ -107,7 +107,7 @@ unsafe impl AsyncRawOnce for AsyncRawOnceCell {
 
     type GetChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
 
-    fn get_checked<'a>(&'a self) -> Self::GetChecked<'a> {
+    fn read_checked<'a>(&'a self) -> Self::GetChecked<'a> {
         async move {
             todo!()
         }

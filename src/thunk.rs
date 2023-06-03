@@ -1,8 +1,9 @@
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
+use std::sync::Exclusive;
 use std::task::{Context, Poll};
-use crate::mut_cell::MutCell;
+// use crate::mut_cell::MutCell;
 
 pub enum OptionThunk<T, F> {
     Uninit,
@@ -67,13 +68,13 @@ impl<F: Future + Unpin> OptionThunk<F::Output, F> {
 }
 
 pub enum Thunk<T, F> {
-    Future(MutCell<F>),
+    Future(Exclusive<F>),
     Value(T),
 }
 
 impl<F: Future + Unpin> Thunk<F::Output, F> {
     pub const fn new(x: F) -> Self {
-        Thunk::Future(MutCell::new(x))
+        Thunk::Future(Exclusive::new(x))
     }
     pub const fn new_value(x: F::Output) -> Self {
         Thunk::Value(x)

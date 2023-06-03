@@ -145,27 +145,27 @@
 // }
 
 use crate::async_fused::{AsyncFused, AsyncFusedEntry};
-use crate::sync::async_once_lock::AsyncRawOnceLock;
+use crate::sync::async_fused_lock::AsyncRawFusedLock;
 
 #[tokio::test]
 async fn test_fused() {
-    let fused = AsyncFused::<AsyncRawOnceLock, _, >::new(1usize);
+    let fused = AsyncFused::<AsyncRawFusedLock, _, >::new(1usize);
     println!("a");
-    match fused.lock().await {
+    match fused.write().await {
         AsyncFusedEntry::Write(mut x) => *x += 1,
         AsyncFusedEntry::Read(_) => unreachable!()
     }
     println!("a");
-    match fused.lock().await {
+    match fused.write().await {
         AsyncFusedEntry::Write(mut x) => {
             *x += 1;
             println!("a");
-            x.init();
+            x.fuse();
         }
         AsyncFusedEntry::Read(_) => unreachable!()
     }
     println!("a");
-    match fused.lock().await {
+    match fused.write().await {
         AsyncFusedEntry::Write(mut x) => unreachable!(),
         AsyncFusedEntry::Read(x) => {
             assert!(*x == 3);
