@@ -1,8 +1,12 @@
 use std::future::Future;
+use std::marker::PhantomData;
 use std::sync::PoisonError;
 use std::sync::TryLockError;
 
-pub enum RawOnceState { Occupied, Vacant }
+pub enum RawOnceState {
+    Occupied,
+    Vacant,
+}
 
 pub unsafe trait AsyncRawFused: 'static {
     type GuardMarker;
@@ -15,9 +19,16 @@ pub unsafe trait AsyncRawFused: 'static {
     unsafe fn unlock_poison(&self);
     unsafe fn unlock_fuse(&self);
 
-    type LockChecked<'a>: 'a + Send+Future<Output=Result<RawOnceState, TryLockError<() > > > where Self: 'a;
-    fn write_checked<'a>(&'a self) -> Self::LockChecked<'a>;
+    type WriteChecked<'a>: 'a + Future<Output = Result<RawOnceState, TryLockError<()>>>
+    where
+        Self: 'a;
+    fn write_checked<'a>(&'a self) -> Self::WriteChecked<'a>;
 
-    type GetChecked<'a>: 'a + Send+Future<Output=Result<RawOnceState, TryLockError<() > > > where Self: 'a;
-    fn read_checked<'a>(&'a self) -> Self::GetChecked<'a>;
+    // type ReadChecked<'a>: 'a + Future<Output=Result<RawOnceState, TryLockError<() > > > where Self: 'a;
+    // fn read_checked<'a>(&'a self) -> Self::ReadChecked<'a>;
 }
+
+pub trait AsyncRawFusedSync = AsyncRawFused + Sync + Send
+where
+    <Self as AsyncRawFused>::GuardMarker: Send,
+    for<'a> <Self as AsyncRawFused>::WriteChecked<'a>: Send;

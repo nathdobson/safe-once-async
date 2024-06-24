@@ -1,10 +1,12 @@
+use crate::raw::AsyncRawFusedSync;
+use crate::raw::{AsyncRawFused, RawOnceState};
 use std::cell::UnsafeCell;
+use std::future::Future;
 use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::{PoisonError, TryLockError};
 use std::thread::panicking;
-use crate::raw::{AsyncRawFused, RawOnceState};
 
 pub struct AsyncFused<R: AsyncRawFused, T> {
     raw: R,
@@ -78,20 +80,40 @@ impl<R: AsyncRawFused, T> AsyncFused<R, T> {
     }
     unsafe fn make_entry(&self, raw: RawOnceState) -> AsyncFusedEntry<R, T> {
         match raw {
-            RawOnceState::Vacant => AsyncFusedEntry::Write(AsyncFusedGuard { fused: Some(self), marker: PhantomData }),
+            RawOnceState::Vacant => AsyncFusedEntry::Write(AsyncFusedGuard {
+                fused: Some(self),
+                marker: PhantomData,
+            }),
             RawOnceState::Occupied => AsyncFusedEntry::Read(&*self.data.get()),
         }
     }
-    pub async fn write_checked(&self) -> Result<AsyncFusedEntry<R, T>, TryLockError<()>> {
-        unsafe {
-            Ok(self.make_entry(self.raw.write_checked().await?))
-        }
+    fn raw(&self) -> &R {
+        &self.raw
     }
-    pub async fn write(&self) -> AsyncFusedEntry<R, T> { self.write_checked().await.unwrap() }
+    pub async fn write_checked<'a>(&'a self) -> Result<AsyncFusedEntry<R, T>, TryLockError<()>> {
+        unsafe { Ok(self.make_entry(self.raw().write_checked().await?)) }
+    }
+    fn write_checked_is_send(
+        &self,
+    ) -> impl Send + Future<Output = Result<AsyncFusedEntry<R, T>, TryLockError<()>>>
+    where
+        R: AsyncRawFusedSync,
+        T: Sync + Send,
+    {
+        self.write_checked()
+    }
+    pub async fn write(&self) -> AsyncFusedEntry<R, T> {
+        self.write_checked().await.unwrap()
+    }
+    fn write_is_send(&self) -> impl Send + Future<Output = AsyncFusedEntry<R, T>>
+    where
+        R: AsyncRawFusedSync,
+        T: Sync + Send,
+    {
+        self.write()
+    }
     pub fn try_write_checked(&self) -> Result<Option<AsyncFusedEntry<R, T>>, TryLockError<()>> {
-        unsafe {
-            Ok(self.raw.try_write_checked()?.map(|e| self.make_entry(e)))
-        }
+        unsafe { Ok(self.raw.try_write_checked()?.map(|e| self.make_entry(e))) }
     }
     pub fn try_write(&self) -> Option<AsyncFusedEntry<R, T>> {
         self.try_write_checked().unwrap()
@@ -99,45 +121,53 @@ impl<R: AsyncRawFused, T> AsyncFused<R, T> {
     pub async fn read_or_fuse(&self, init: impl FnOnce(&mut T)) -> &T {
         self.read_or_fuse_checked(init).await.unwrap()
     }
-    pub async fn read_or_fuse_checked(&self, init: impl FnOnce(&mut T)) -> Result<&T, TryLockError<()>> {
+    pub async fn read_or_fuse_checked(
+        &self,
+        init: impl FnOnce(&mut T),
+    ) -> Result<&T, TryLockError<()>> {
         Ok(self.write_checked().await?.or_fuse(init))
     }
     pub fn try_read_checked(&self) -> Result<Option<&T>, PoisonError<()>> {
         unsafe {
             Ok(match self.raw.try_read_checked()? {
                 RawOnceState::Vacant => None,
-                RawOnceState::Occupied => Some(&*self.data.get())
+                RawOnceState::Occupied => Some(&*self.data.get()),
             })
         }
     }
-    pub async fn read_checked(&self) -> Result<Option<&T>, TryLockError<()>> {
-        unsafe {
-            Ok(match self.raw.read_checked().await? {
-                RawOnceState::Vacant => None,
-                RawOnceState::Occupied => Some(&*self.data.get())
-            })
-        }
-    }
+    // pub async fn read_checked(&self) -> Result<Option<&T>, TryLockError<()>> {
+    //     unsafe {
+    //         Ok(match self.raw.read_checked().await? {
+    //             RawOnceState::Vacant => None,
+    //             RawOnceState::Occupied => Some(&*self.data.get())
+    //         })
+    //     }
+    // }
     pub fn try_read(&self) -> Option<&T> {
         self.try_read_checked().unwrap()
     }
-    pub async fn read(&self) -> Option<&T> {
-        self.read_checked().await.unwrap()
-    }
+    // pub async fn read(&self) -> Option<&T> {
+    //     self.read_checked().await.unwrap()
+    // }
     pub fn into_inner(self) -> T {
         self.data.into_inner()
     }
 }
 
 impl<R: AsyncRawFused, T: Default> Default for AsyncFused<R, T> {
-    fn default() -> Self { AsyncFused::new(T::default()) }
+    fn default() -> Self {
+        AsyncFused::new(T::default())
+    }
 }
 
 unsafe impl<R: AsyncRawFused + Send, T: Send> Send for AsyncFused<R, T> {}
 
-unsafe impl<R: AsyncRawFused + Send + Sync, T: Send + Sync> Sync for AsyncFused<R, T> {}
+unsafe impl<R: AsyncRawFused + Sync, T: Send + Sync> Sync for AsyncFused<R, T> {}
 
-impl<R: AsyncRawFused + RefUnwindSafe + UnwindSafe, T: RefUnwindSafe + UnwindSafe> RefUnwindSafe for AsyncFused<R, T> {}
+impl<R: AsyncRawFused + RefUnwindSafe + UnwindSafe, T: RefUnwindSafe + UnwindSafe> RefUnwindSafe
+    for AsyncFused<R, T>
+{
+}
 
 impl<R: AsyncRawFused + UnwindSafe, T: UnwindSafe> UnwindSafe for AsyncFused<R, T> {}
 

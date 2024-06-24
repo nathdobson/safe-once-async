@@ -1,11 +1,10 @@
+use crate::raw::{AsyncRawFused, RawOnceState};
+use parking_lot::lock_api::GuardSend;
 use std::future::Future;
-use std::intrinsics::unreachable;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::{Acquire, Release};
 use std::sync::{PoisonError, TryLockError};
-use parking_lot::lock_api::GuardSend;
 use tokio::sync::{Semaphore, TryAcquireError};
-use crate::raw::{AsyncRawFused, RawOnceState};
 
 const STATE_UNINIT: usize = 0;
 const STATE_INIT: usize = 1;
@@ -20,32 +19,41 @@ impl AsyncRawFusedLock {}
 
 unsafe impl AsyncRawFused for AsyncRawFusedLock {
     type GuardMarker = GuardSend;
-    const UNLOCKED: Self = AsyncRawFusedLock { state: AtomicUsize::new(STATE_UNINIT), semaphore: Semaphore::const_new(1) };
-    const READ: Self = AsyncRawFusedLock { state: AtomicUsize::new(STATE_INIT), semaphore: Semaphore::const_new(1) };
-    const POISON: Self = AsyncRawFusedLock { state: AtomicUsize::new(STATE_POISON), semaphore: Semaphore::const_new(1) };
+    const UNLOCKED: Self = AsyncRawFusedLock {
+        state: AtomicUsize::new(STATE_UNINIT),
+        semaphore: Semaphore::const_new(1),
+    };
+    const READ: Self = AsyncRawFusedLock {
+        state: AtomicUsize::new(STATE_INIT),
+        semaphore: Semaphore::const_new(1),
+    };
+    const POISON: Self = AsyncRawFusedLock {
+        state: AtomicUsize::new(STATE_POISON),
+        semaphore: Semaphore::const_new(1),
+    };
 
     fn try_write_checked(&self) -> Result<Option<RawOnceState>, PoisonError<()>> {
         match self.try_read_checked()? {
-            RawOnceState::Occupied => { return Ok(Some(RawOnceState::Occupied)); }
+            RawOnceState::Occupied => {
+                return Ok(Some(RawOnceState::Occupied));
+            }
             _ => {}
         }
         match self.semaphore.try_acquire() {
-            Ok(lock) => {
-                match self.try_read_checked()? {
-                    RawOnceState::Occupied => unreachable!(),
-                    RawOnceState::Vacant => {
-                        lock.forget();
-                        Ok(Some(RawOnceState::Vacant))
-                    }
+            Ok(lock) => match self.try_read_checked()? {
+                RawOnceState::Occupied => unreachable!(),
+                RawOnceState::Vacant => {
+                    lock.forget();
+                    Ok(Some(RawOnceState::Vacant))
                 }
-            }
-            Err(TryAcquireError::Closed) => {
-                match self.try_read_checked()? {
-                    RawOnceState::Occupied => { return Ok(Some(RawOnceState::Occupied)); }
-                    RawOnceState::Vacant => unreachable!()
+            },
+            Err(TryAcquireError::Closed) => match self.try_read_checked()? {
+                RawOnceState::Occupied => {
+                    return Ok(Some(RawOnceState::Occupied));
                 }
-            }
-            Err(TryAcquireError::NoPermits) => Ok(None)
+                RawOnceState::Vacant => unreachable!(),
+            },
+            Err(TryAcquireError::NoPermits) => Ok(None),
         }
     }
 
@@ -54,7 +62,7 @@ unsafe impl AsyncRawFused for AsyncRawFusedLock {
             STATE_UNINIT => Ok(RawOnceState::Vacant),
             STATE_INIT => Ok(RawOnceState::Occupied),
             STATE_POISON => Err(PoisonError::new(())),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
@@ -72,11 +80,14 @@ unsafe impl AsyncRawFused for AsyncRawFusedLock {
         self.semaphore.close();
     }
 
-    type LockChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
-    fn write_checked<'a>(&'a self) -> Self::LockChecked<'a> {
+    type WriteChecked<'a> =
+        impl 'a + Send + Future<Output = Result<RawOnceState, TryLockError<()>>>;
+    fn write_checked<'a>(&'a self) -> Self::WriteChecked<'a> {
         async move {
             match self.try_read_checked()? {
-                RawOnceState::Occupied => { return Ok(RawOnceState::Occupied); }
+                RawOnceState::Occupied => {
+                    return Ok(RawOnceState::Occupied);
+                }
                 _ => {}
             }
             match self.semaphore.acquire().await {
@@ -86,34 +97,34 @@ unsafe impl AsyncRawFused for AsyncRawFusedLock {
                         lock.forget();
                         Ok(RawOnceState::Vacant)
                     }
-                }
+                },
                 Err(_) => match self.try_read_checked()? {
                     RawOnceState::Occupied => Ok(RawOnceState::Occupied),
-                    RawOnceState::Vacant => unreachable!()
-                }
+                    RawOnceState::Vacant => unreachable!(),
+                },
             }
         }
     }
 
-    type GetChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
-    fn read_checked<'a>(&'a self) -> Self::GetChecked<'a> {
-        async move {
-            match self.try_read_checked()? {
-                RawOnceState::Occupied => { return Ok(RawOnceState::Occupied); }
-                _ => {}
-            }
-            match self.semaphore.acquire().await {
-                Ok(lock) => match self.try_read_checked()? {
-                    RawOnceState::Occupied => unreachable!(),
-                    RawOnceState::Vacant => Ok(RawOnceState::Vacant),
-                }
-                Err(_) => match self.try_read_checked()? {
-                    RawOnceState::Occupied => Ok(RawOnceState::Occupied),
-                    RawOnceState::Vacant => unreachable!()
-                }
-            }
-        }
-    }
+    // type ReadChecked<'a> = impl 'a + Send + Future<Output=Result<RawOnceState, TryLockError<()>>>;
+    // fn read_checked<'a>(&'a self) -> Self::ReadChecked<'a> {
+    //     async move {
+    //         match self.try_read_checked()? {
+    //             RawOnceState::Occupied => { return Ok(RawOnceState::Occupied); }
+    //             _ => {}
+    //         }
+    //         match self.semaphore.acquire().await {
+    //             Ok(lock) => match self.try_read_checked()? {
+    //                 RawOnceState::Occupied => unreachable!(),
+    //                 RawOnceState::Vacant => Ok(RawOnceState::Vacant),
+    //             }
+    //             Err(_) => match self.try_read_checked()? {
+    //                 RawOnceState::Occupied => Ok(RawOnceState::Occupied),
+    //                 RawOnceState::Vacant => unreachable!()
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 unsafe impl Send for AsyncRawFusedLock {}

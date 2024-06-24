@@ -149,11 +149,11 @@ use crate::sync::async_fused_lock::AsyncRawFusedLock;
 
 #[tokio::test]
 async fn test_fused() {
-    let fused = AsyncFused::<AsyncRawFusedLock, _, >::new(1usize);
+    let fused = AsyncFused::<AsyncRawFusedLock, _>::new(1usize);
     println!("a");
     match fused.write().await {
         AsyncFusedEntry::Write(mut x) => *x += 1,
-        AsyncFusedEntry::Read(_) => unreachable!()
+        AsyncFusedEntry::Read(_) => unreachable!(),
     }
     println!("a");
     match fused.write().await {
@@ -162,7 +162,7 @@ async fn test_fused() {
             println!("a");
             x.fuse();
         }
-        AsyncFusedEntry::Read(_) => unreachable!()
+        AsyncFusedEntry::Read(_) => unreachable!(),
     }
     println!("a");
     match fused.write().await {

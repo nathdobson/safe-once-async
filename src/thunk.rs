@@ -62,7 +62,7 @@ impl<F: Future + Unpin> OptionThunk<F::Output, F> {
         match self {
             OptionThunk::Future(_) => None,
             OptionThunk::Value(x) => Some(x),
-            OptionThunk::Uninit => None
+            OptionThunk::Uninit => None,
         }
     }
 }

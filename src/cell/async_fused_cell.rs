@@ -1,115 +1,112 @@
+use crate::cell::condvar::Condvar;
+use parking_lot::lock_api::GuardNoSend;
 use std::cell::{Cell, RefCell};
 use std::future::Future;
-use std::ptr::null_mut;
+use std::mem;
+use std::ptr::{null, null_mut};
 use std::sync::{PoisonError, TryLockError};
 use std::task::Waker;
-use parking_lot::lock_api::GuardNoSend;
 
 use crate::raw::{AsyncRawFused, RawOnceState};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 enum State {
-    Uninit,
-    Initializing,
-    Initialized,
+    Unlocked,
+    Write,
+    Read,
     Poison,
 }
 
 #[derive(Debug)]
-struct Waiter {
-    next: *mut Waiter,
-    prev: *mut Waiter,
-    waker: Option<Waker>,
+pub struct AsyncRawFusedCell {
+    state: Cell<State>,
+    writers: Condvar,
 }
 
-#[derive(Debug)]
-struct Inner {
-    state: State,
-    lockers: *mut Waiter,
-    getters: *mut Waiter,
+impl AsyncRawFusedCell {
+    pub async fn write_checked_impl(&self) -> Result<RawOnceState, TryLockError<()>> {
+        loop {
+            match self.state.get() {
+                State::Unlocked => {
+                    self.state.set(State::Write);
+                    return Ok(RawOnceState::Vacant);
+                }
+                State::Write => {
+                    self.writers.wait().await.consume();
+                }
+                State::Read => {
+                    return Ok(RawOnceState::Occupied);
+                }
+                State::Poison => {
+                    return Err(TryLockError::Poisoned(PoisonError::new(())));
+                }
+            }
+        }
+    }
 }
-
-#[derive(Debug)]
-pub struct AsyncRawFusedCell(RefCell<Inner>);
 
 unsafe impl AsyncRawFused for AsyncRawFusedCell {
     type GuardMarker = GuardNoSend;
-    const UNLOCKED: Self = AsyncRawFusedCell(RefCell::new(Inner {
-        state: State::Uninit,
-        lockers: null_mut(),
-        getters: null_mut(),
-    }));
-    const READ: Self = AsyncRawFusedCell(RefCell::new(Inner {
-        state: State::Initialized,
-        lockers: null_mut(),
-        getters: null_mut(),
-    }));
-    const POISON: Self = AsyncRawFusedCell(RefCell::new(Inner {
-        state: State::Poison,
-        lockers: null_mut(),
-        getters: null_mut(),
-    }));
+    const UNLOCKED: Self = AsyncRawFusedCell {
+        state: Cell::new(State::Unlocked),
+        writers: Condvar::new(),
+    };
+    const READ: Self = AsyncRawFusedCell {
+        state: Cell::new(State::Read),
+        writers: Condvar::new(),
+    };
+    const POISON: Self = AsyncRawFusedCell {
+        state: Cell::new(State::Poison),
+        writers: Condvar::new(),
+    };
 
     fn try_write_checked(&self) -> Result<Option<RawOnceState>, PoisonError<()>> {
-        todo!()
-        // match self.0.get() {
-        //     State::Uninit => {
-        //         self.0.set(State::Initializing);
-        //         Ok(Some(RawOnceState::Vacant))
-        //     }
-        //     State::Initializing =>
-        //         Ok(None),
-        //     State::Initialized =>
-        //         Ok(Some(RawOnceState::Occupied)),
-        //     State::Poison =>
-        //         Err(PoisonError),
-        // }
+        match self.state.get() {
+            State::Unlocked => {
+                self.state.set(State::Write);
+                Ok(Some(RawOnceState::Vacant))
+            }
+            State::Write => Ok(None),
+            State::Read => Ok(Some(RawOnceState::Occupied)),
+            State::Poison => Err(PoisonError::new(())),
+        }
     }
 
     fn try_read_checked(&self) -> Result<RawOnceState, PoisonError<()>> {
-        todo!()
-        // match self.0.get() {
-        //     State::Uninit => Ok(RawOnceState::Vacant),
-        //     State::Initializing => Ok(RawOnceState::Vacant),
-        //     State::Initialized => Ok(RawOnceState::Occupied),
-        //     State::Poison => Err(PoisonError),
-        // }
+        match self.state.get() {
+            State::Unlocked => Ok(RawOnceState::Vacant),
+            State::Write => Ok(RawOnceState::Vacant),
+            State::Read => Ok(RawOnceState::Occupied),
+            State::Poison => Err(PoisonError::new(())),
+        }
     }
     unsafe fn unlock(&self) {
-        todo!()
-        // match self.0.get() {
-        //     State::Initializing => self.0.set(State::Uninit),
-        //     _ => panic!("Not already initializing"),
-        // }
+        assert_eq!(self.state.get(), State::Write);
+        self.state.set(State::Unlocked);
+        self.writers.notify();
     }
-    unsafe fn unlock_fuse(&self) {
-        todo!()
-        // match self.0.get() {
-        //     State::Initializing => self.0.set(State::Initialized),
-        //     _ => panic!("Not already initializing"),
-        // }
-    }
-
     unsafe fn unlock_poison(&self) {
-        // match self.0.get() {
-        //     State::Initializing => self.0.set(State::Poison),
-        //     _ => panic!("Not already initializing"),
-        // }
-        todo!()
-    }
-    type LockChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
-
-    fn write_checked<'a>(&'a self) -> Self::LockChecked<'a> {
-        async move {
-            todo!()
-        }
+        assert_eq!(self.state.get(), State::Write);
+        self.state.set(State::Poison);
+        self.writers.notify();
     }
 
-    type GetChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
-
-    fn read_checked<'a>(&'a self) -> Self::GetChecked<'a> {
-        async move {
-            todo!()
-        }
+    unsafe fn unlock_fuse(&self) {
+        assert_eq!(self.state.get(), State::Write);
+        self.state.set(State::Read);
+        self.writers.notify();
     }
+    type WriteChecked<'a> = impl 'a + Future<Output = Result<RawOnceState, TryLockError<()>>>;
+
+    fn write_checked<'a>(&'a self) -> Self::WriteChecked<'a> {
+        self.write_checked_impl()
+    }
+
+    // type ReadChecked<'a> = impl 'a + Future<Output=Result<RawOnceState, TryLockError<()>>>;
+    //
+    // fn read_checked<'a>(&'a self) -> Self::ReadChecked<'a> {
+    //     async move {
+    //         todo!()
+    //     }
+    // }
 }

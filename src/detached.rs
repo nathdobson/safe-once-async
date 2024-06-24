@@ -8,7 +8,7 @@ pub struct Detached<T>(JoinHandle<T>);
 
 impl<T> Unpin for Detached<T> {}
 
-pub fn detached<T: 'static + Send>(x: impl 'static + Send + Future<Output=T>) -> Detached<T> {
+pub fn detached<T: 'static + Send>(x: impl 'static + Send + Future<Output = T>) -> Detached<T> {
     Detached(tokio::spawn(x))
 }
 
@@ -24,7 +24,7 @@ impl<T> Future for Detached<T> {
         match Pin::new(&mut self.get_mut().0).poll(cx) {
             Poll::Ready(Ok(x)) => Poll::Ready(x),
             Poll::Ready(Err(e)) => resume_unwind(e.into_panic()),
-            Poll::Pending => Poll::Pending
+            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -43,13 +43,18 @@ pub enum DetachedLazy<T, Fu> {
     Detached(Detached<T>),
 }
 
-pub const fn detached_lazy<T: 'static + Send, F: 'static + Send + Future<Output=T>>(x: F) -> DetachedLazy<T, F> {
+pub const fn detached_lazy<T: 'static + Send, F: 'static + Send + Future<Output = T>>(
+    x: F,
+) -> DetachedLazy<T, F> {
     DetachedLazy::Future(Some(x))
 }
 
 impl<T, Fu> Unpin for DetachedLazy<T, Fu> {}
 
-impl<Fu: 'static + Send + Unpin + Future> Future for DetachedLazy<Fu::Output, Fu> where Fu::Output: Send {
+impl<Fu: 'static + Send + Unpin + Future> Future for DetachedLazy<Fu::Output, Fu>
+where
+    Fu::Output: Send,
+{
     type Output = Fu::Output;
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this: &mut Self = self.get_mut();
