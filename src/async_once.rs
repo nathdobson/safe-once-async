@@ -28,10 +28,9 @@ pub struct AsyncOnceVacant<'a, R: AsyncRawFused, T> {
     guard: AsyncFusedGuard<'a, R, OptionThunk<T, Detached<T>>>,
 }
 
-pub type AsyncOnceOccupied<'a, R: AsyncRawFused, T: 'static> =
-    <() as AsyncOnceOccupiedTrait>::Fut<'a, R, T>;
+pub type AsyncOnceOccupied<'a, R, T> = <() as AsyncOnceOccupiedTrait>::Fut<'a, R, T>;
 
-trait AsyncOnceOccupiedTrait {
+pub trait AsyncOnceOccupiedTrait {
     type Fut<'a, R: AsyncRawFused, T: 'static>: 'a + Future<Output = &'a T>
     where
         Self: 'a;
