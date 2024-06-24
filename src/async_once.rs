@@ -28,19 +28,32 @@ pub struct AsyncOnceVacant<'a, R: AsyncRawFused, T> {
     guard: AsyncFusedGuard<'a, R, OptionThunk<T, Detached<T>>>,
 }
 
-pub type AsyncOnceOccupied<'a, R: AsyncRawFused, T: 'static> = impl 'a + Future<Output = &'a T>;
+pub type AsyncOnceOccupied<'a, R: AsyncRawFused, T: 'static> =
+    <() as AsyncOnceOccupiedTrait>::Fut<'a, R, T>;
 
-fn async_once_occupied<'a, R: AsyncRawFused, T>(
-    entry: AsyncFusedEntry<'a, R, OptionThunk<T, Detached<T>>>,
-) -> AsyncOnceOccupied<'a, R, T> {
-    async move {
-        match entry {
-            AsyncFusedEntry::Write(mut w) => {
-                w.force().await;
-                let w = w.fuse();
-                w.get().unwrap()
+trait AsyncOnceOccupiedTrait {
+    type Fut<'a, R: AsyncRawFused, T: 'static>: 'a + Future<Output = &'a T>
+    where
+        Self: 'a;
+    fn async_once_occupied<'a, R: AsyncRawFused, T>(
+        entry: AsyncFusedEntry<'a, R, OptionThunk<T, Detached<T>>>,
+    ) -> AsyncOnceOccupied<'a, R, T>;
+}
+
+impl AsyncOnceOccupiedTrait for () {
+    type Fut<'a, R: AsyncRawFused, T: 'static> = impl 'a + Future<Output = &'a T>;
+    fn async_once_occupied<'a, R: AsyncRawFused, T>(
+        entry: AsyncFusedEntry<'a, R, OptionThunk<T, Detached<T>>>,
+    ) -> AsyncOnceOccupied<'a, R, T> {
+        async move {
+            match entry {
+                AsyncFusedEntry::Write(mut w) => {
+                    w.force().await;
+                    let w = w.fuse();
+                    w.get().unwrap()
+                }
+                AsyncFusedEntry::Read(r) => r.get().unwrap(),
             }
-            AsyncFusedEntry::Read(r) => r.get().unwrap(),
         }
     }
 }
@@ -51,11 +64,11 @@ impl<'a, R: AsyncRawFused, T: 'static + Send> AsyncOnceVacant<'a, R, T> {
         fu: Fu,
     ) -> AsyncOnceOccupied<'a, R, T> {
         self.guard.start(detached(fu));
-        async_once_occupied(AsyncFusedEntry::Write(self.guard))
+        <()>::async_once_occupied(AsyncFusedEntry::Write(self.guard))
     }
     pub fn start_detached(mut self, fu: Detached<T>) -> AsyncOnceOccupied<'a, R, T> {
         self.guard.start(fu);
-        async_once_occupied(AsyncFusedEntry::Write(self.guard))
+        <()>::async_once_occupied(AsyncFusedEntry::Write(self.guard))
     }
 }
 
@@ -74,13 +87,13 @@ impl<R: AsyncRawFused, T: 'static + Send> AsyncOnce<R, T> {
         match self.fused.write().await {
             AsyncFusedEntry::Write(w) => {
                 if w.started() {
-                    AsyncOnceEntry::Occupied(async_once_occupied(AsyncFusedEntry::Write(w)))
+                    AsyncOnceEntry::Occupied(<()>::async_once_occupied(AsyncFusedEntry::Write(w)))
                 } else {
                     AsyncOnceEntry::Vacant(AsyncOnceVacant { guard: w })
                 }
             }
             AsyncFusedEntry::Read(r) => {
-                AsyncOnceEntry::Occupied(async_once_occupied(AsyncFusedEntry::Read(r)))
+                AsyncOnceEntry::Occupied(<()>::async_once_occupied(AsyncFusedEntry::Read(r)))
             }
         }
     }
