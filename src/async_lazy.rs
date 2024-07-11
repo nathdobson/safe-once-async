@@ -1,10 +1,12 @@
 use crate::async_fused::{AsyncFused, AsyncFusedEntry, AsyncFusedGuard};
 // use crate::const_box::{ConstBox, ConstBoxFuture};
-use crate::detached::{detached, detached_lazy, DetachedLazy};
+// use crate::detached::{detached, detached_lazy, DetachedLazy};
+use crate::detached::DetachedFuture;
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use std::cell::{Cell, UnsafeCell};
 use std::future::{poll_fn, Future};
+use std::marker::Unsize;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::thread::panicking;
@@ -16,17 +18,16 @@ use crate::raw::{AsyncRawFused, RawOnceState};
 use crate::raw::AsyncRawFusedSync;
 use crate::thunk::{OptionThunk, Thunk};
 
-pub struct AsyncLazy<R: AsyncRawFused, T> {
-    fused: AsyncFused<R, Thunk<T, BoxFuture<'static, T>>>,
+pub struct AsyncLazy<R: AsyncRawFused, F: DetachedFuture> {
+    fused: AsyncFused<R, Thunk<F::Output, F>>,
 }
 
-impl<R: AsyncRawFused, T: 'static + Send> AsyncLazy<R, T> {
-    pub fn new<Fu>(fu: Fu) -> Self
-    where
-        Fu: 'static + Send + Future<Output = T>,
-    {
+impl<R: AsyncRawFused, F: Unpin + DetachedFuture<Output = T>, T: 'static + Send>
+    AsyncLazy<R, F>
+{
+    pub fn new(f: F) -> Self {
         AsyncLazy {
-            fused: AsyncFused::new(Thunk::new(async move { detached(fu).await }.boxed())),
+            fused: AsyncFused::new(Thunk::new(f)),
         }
     }
 
@@ -39,20 +40,17 @@ impl<R: AsyncRawFused, T: 'static + Send> AsyncLazy<R, T> {
             AsyncFusedEntry::Read(x) => x.get().unwrap(),
         }
     }
+}
 
+impl<R: AsyncRawFused, F, T: 'static + Send> AsyncLazy<R, F>
+where
+    F: Send + Unpin + DetachedFuture<Output = T>,
+{
     fn get_is_send(&self) -> impl Send + Future<Output = &T>
     where
         R: AsyncRawFusedSync,
         T: Send + Sync,
     {
         self.get()
-    }
-}
-
-impl<R: AsyncRawFused, T> From<T> for AsyncLazy<R, T> {
-    fn from(value: T) -> Self {
-        AsyncLazy {
-            fused: AsyncFused::new_read(Thunk::new_value(value)),
-        }
     }
 }

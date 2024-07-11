@@ -24,8 +24,10 @@
 //!
 //! ```
 //! use std::future::Future;
+//! use std::pin::Pin;
+//! use safe_once_async::detached::DetachedFuture;
 //! use safe_once_async::sync::AsyncLazyLock;
-//! fn init(x:&AsyncLazyLock<usize>) -> impl Send+Future<Output=&usize>{
+//! fn init(x:&AsyncLazyLock<Pin<Box<dyn Send+DetachedFuture<Output=usize>>>>) -> impl Send+Future<Output=&usize>{
 //!     x.get()
 //! }
 //! ```
@@ -40,10 +42,12 @@
 //!
 //! ```
 //! use std::future::Future;
+//! use std::pin::Pin;
 //! use safe_once_async::async_lazy::AsyncLazy;
+//! use safe_once_async::detached::DetachedFuture;
 //! use safe_once_async::raw::AsyncRawFused;
 //! use safe_once_async::raw::AsyncRawFusedSync;
-//! fn init<R:AsyncRawFusedSync>(x:&AsyncLazy<R,usize>) -> impl Send+Future<Output=&usize>{
+//! fn init<R:AsyncRawFusedSync>(x:&AsyncLazy<R,Pin<Box<dyn Send+DetachedFuture<Output=usize>>>>) -> impl Send+Future<Output=&usize>{
 //!     x.get()
 //! }
 //! ```
