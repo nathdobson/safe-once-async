@@ -10,7 +10,6 @@ use std::marker::Unsize;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::thread::panicking;
-use tokio::task::JoinHandle;
 // use crate::pure_future::PureFuture;
 // use crate::async_once::{AsyncOnce, AsyncOnceEntry};
 use crate::raw::{AsyncRawFused, RawOnceState};
