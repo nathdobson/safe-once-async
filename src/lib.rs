@@ -7,19 +7,13 @@
 #![feature(type_alias_impl_trait)]
 #![feature(const_async_blocks)]
 #![feature(const_heap)]
-#![feature(const_nonnull_new)]
-#![feature(const_option)]
-#![feature(const_ptr_write)]
 #![feature(unsize)]
 #![feature(coerce_unsized)]
-#![feature(const_pin)]
-#![feature(const_ptr_is_null)]
 #![feature(exclusive_wrapper)]
 #![allow(unused_mut)]
 #![feature(trait_alias)]
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
-#![feature(const_mut_refs)]
 
 //!
 //! ```
@@ -35,7 +29,8 @@
 //! ```compile_fail
 //! use std::future::Future;
 //! use safe_once_async::cell::AsyncLazyCell;
-//! fn init(x:&AsyncLazyCell<usize>) -> impl Send+Future<Output=&usize>{
+//! use safe_once_async::detached::JoinTransparent;
+//! fn init(x:&AsyncLazyCell<JoinTransparent<usize>>) -> impl Send+Future<Output=&usize>{
 //!     x.get()
 //! }
 //! ```

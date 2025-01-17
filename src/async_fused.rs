@@ -90,7 +90,7 @@ impl<R: AsyncRawFused, T> AsyncFused<R, T> {
     fn raw(&self) -> &R {
         &self.raw
     }
-    pub async fn write_checked<'a>(&'a self) -> Result<AsyncFusedEntry<R, T>, TryLockError<()>> {
+    pub async fn write_checked(&self) -> Result<AsyncFusedEntry<R, T>, TryLockError<()>> {
         unsafe { Ok(self.make_entry(self.raw().write_checked().await?)) }
     }
     fn write_checked_is_send(
